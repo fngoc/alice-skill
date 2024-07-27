@@ -9,15 +9,10 @@ import (
 )
 
 func TestWebhook(t *testing.T) {
-	// тип http.HandlerFunc реализует интерфейс http.Handler
-	// это поможет передать хендлер тестовому серверу
 	handler := http.HandlerFunc(webhook)
-	// запускаем тестовый сервер, будет выбран первый свободный порт
-	server := httptest.NewServer(handler)
-	// останавливаем сервер после завершения теста
-	defer server.Close()
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
 
-	// описываем ожидаемое тело ответа при успешном запросе
 	successBody := `{
         "response": {
             "text": "Извините, я пока ничего не умею"
@@ -25,30 +20,71 @@ func TestWebhook(t *testing.T) {
         "version": "1.0"
     }`
 
-	// описываем набор данных: метод запроса, ожидаемый код ответа, ожидаемое тело
 	testCases := []struct {
+		name         string // добавляем название тестов
 		method       string
+		body         string // добавляем тело запроса в табличные тесты
 		expectedCode int
 		expectedBody string
 	}{
-		{method: http.MethodGet, expectedCode: http.StatusMethodNotAllowed, expectedBody: ""},
-		{method: http.MethodPut, expectedCode: http.StatusMethodNotAllowed, expectedBody: ""},
-		{method: http.MethodDelete, expectedCode: http.StatusMethodNotAllowed, expectedBody: ""},
-		{method: http.MethodPost, expectedCode: http.StatusOK, expectedBody: successBody},
+		{
+			name:         "method_get",
+			method:       http.MethodGet,
+			expectedCode: http.StatusMethodNotAllowed,
+			expectedBody: "",
+		},
+		{
+			name:         "method_put",
+			method:       http.MethodPut,
+			expectedCode: http.StatusMethodNotAllowed,
+			expectedBody: "",
+		},
+		{
+			name:         "method_delete",
+			method:       http.MethodDelete,
+			expectedCode: http.StatusMethodNotAllowed,
+			expectedBody: "",
+		},
+		{
+			name:         "method_post_without_body",
+			method:       http.MethodPost,
+			expectedCode: http.StatusInternalServerError,
+			expectedBody: "",
+		},
+		{
+			name:         "method_post_unsupported_type",
+			method:       http.MethodPost,
+			body:         `{"request": {"type": "idunno", "command": "do something"}, "version": "1.0"}`,
+			expectedCode: http.StatusUnprocessableEntity,
+			expectedBody: "",
+		},
+		{
+			name:         "method_post_success",
+			method:       http.MethodPost,
+			body:         `{"request": {"type": "SimpleUtterance", "command": "sudo do something"}, "version": "1.0"}`,
+			expectedCode: http.StatusOK,
+			expectedBody: successBody,
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.method, func(t *testing.T) {
 			req := resty.New().R()
 			req.Method = tc.method
-			req.URL = server.URL
+			req.URL = srv.URL
 
-			resp, _ := req.Send()
-			assert.Equal(t, tc.expectedCode, resp.StatusCode())
-			// проверим корректность полученного тела ответа, если мы его ожидаем
+			if len(tc.body) > 0 {
+				req.SetHeader("Content-Type", "application/json")
+				req.SetBody(tc.body)
+			}
+
+			resp, err := req.Send()
+			assert.NoError(t, err, "error making HTTP request")
+
+			assert.Equal(t, tc.expectedCode, resp.StatusCode(), "Response code didn't match expected")
+			// проверяем корректность полученного тела ответа, если мы его ожидаем
 			if tc.expectedBody != "" {
-				// assert.JSONEq помогает сравнить две JSON-строки
-				assert.JSONEq(t, tc.expectedBody, string(resp.Body()), "Тело ответа не совпадает с ожидаемым")
+				assert.JSONEq(t, tc.expectedBody, string(resp.Body()))
 			}
 		})
 	}
